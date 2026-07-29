@@ -15,6 +15,8 @@ import {
   AlertCircle,
   Wifi,
   Sparkles,
+  Monitor,
+  Share2,
 } from 'lucide-react';
 import { SharedFile, ChatMessage, Point, IceServerConfig } from '../types';
 import {
@@ -29,7 +31,7 @@ interface TvReceiverProps {
   onOpenShareModal?: () => void;
 }
 
-export const TvReceiver: React.FC<TvReceiverProps> = () => {
+export const TvReceiver: React.FC<TvReceiverProps> = ({ onOpenShareModal }) => {
   const [statusText, setStatusText] = useState('Waiting for approval from presenter...');
   const [connBadge, setConnBadge] = useState<{ text: string; type: 'live' | 'warn' | 'blocked' | 'waiting' }>({
     text: 'Waiting',
@@ -568,7 +570,7 @@ export const TvReceiver: React.FC<TvReceiverProps> = () => {
   return (
     <div
       ref={containerRef}
-      className="relative flex h-[calc(100vh-61px)] w-full flex-col items-center justify-center bg-black overflow-hidden select-none"
+      className="relative flex h-screen w-full flex-col items-center justify-center bg-black overflow-hidden select-none"
     >
       {/* Video Container */}
       <div className="relative flex h-full w-full items-center justify-center bg-black">
@@ -592,32 +594,57 @@ export const TvReceiver: React.FC<TvReceiverProps> = () => {
           }`}
         />
 
-        {/* Tap To Play Overlay */}
-        {needsTapToPlay && (
-          <button
-            onClick={() => {
-              if (videoRef.current) {
-                videoRef.current.play().then(() => setNeedsTapToPlay(false));
-              }
-            }}
-            className="absolute z-30 flex items-center gap-2 rounded-2xl bg-blue-600 px-6 py-3.5 text-base font-bold text-white shadow-2xl hover:bg-blue-500 transition-all transform hover:scale-105"
-          >
-            <Play className="w-5 h-5 fill-white" /> Tap to Start Audio & Playback
-          </button>
-        )}
-
-        {/* Status Overlay */}
-        {statusText && (
-          <div className="absolute top-4 left-4 z-20 flex items-center gap-2 rounded-xl bg-black/80 px-3.5 py-2 text-xs font-semibold text-zinc-300 backdrop-blur-md border border-zinc-800 shadow-lg">
-            <div className="h-2 w-2 rounded-full bg-blue-500 animate-ping" />
-            {statusText}
+        {/* Dedicated TV Receiver Top Overlay Header */}
+        <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between gap-3 pointer-events-none">
+          {/* Top Left: TV Status Badge */}
+          <div className="flex items-center gap-2 pointer-events-auto">
+            <div className="flex items-center gap-2 rounded-2xl bg-zinc-950/85 px-3.5 py-2 text-xs font-semibold text-zinc-200 backdrop-blur-xl border border-zinc-800/90 shadow-2xl">
+              <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-blue-600/30 text-blue-400 border border-blue-500/30">
+                <Tv className="w-3.5 h-3.5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5 font-bold text-white text-xs">
+                  TV Receiver
+                  <span className="rounded-full bg-emerald-500/20 px-2 py-0.2 text-[9px] font-bold text-emerald-400 border border-emerald-500/30">
+                    /tv
+                  </span>
+                </div>
+                {statusText ? (
+                  <p className="text-[10px] text-zinc-400">{statusText}</p>
+                ) : (
+                  <p className="text-[10px] text-emerald-400 font-mono">Stream Active</p>
+                )}
+              </div>
+            </div>
           </div>
-        )}
 
-        {/* Latency Badge */}
-        <div className="absolute top-4 right-4 z-20 flex items-center gap-1.5 rounded-xl bg-black/70 px-3 py-1.5 font-mono text-xs text-zinc-400 backdrop-blur-md border border-zinc-800">
-          <Wifi className="w-3.5 h-3.5 text-emerald-400" />
-          {latencyText}
+          {/* Top Right: Actions & Latency */}
+          <div className="flex items-center gap-2 pointer-events-auto">
+            <div className="hidden sm:flex items-center gap-1.5 rounded-2xl bg-zinc-950/85 px-3 py-2 font-mono text-xs text-zinc-300 backdrop-blur-xl border border-zinc-800/90 shadow-2xl">
+              <Wifi className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{latencyText}</span>
+            </div>
+
+            {onOpenShareModal && (
+              <button
+                onClick={onOpenShareModal}
+                className="flex items-center gap-1.5 rounded-2xl bg-zinc-950/85 px-3 py-2 text-xs font-semibold text-zinc-300 hover:text-white backdrop-blur-xl border border-zinc-800/90 hover:bg-zinc-900 transition-all shadow-2xl"
+                title="Share QR code / TV Link"
+              >
+                <Share2 className="w-3.5 h-3.5 text-blue-400" />
+                <span className="hidden sm:inline">TV QR</span>
+              </button>
+            )}
+
+            <a
+              href="/"
+              className="flex items-center gap-1.5 rounded-2xl bg-zinc-950/85 px-3 py-2 text-xs font-semibold text-zinc-300 hover:text-white backdrop-blur-xl border border-zinc-800/90 hover:bg-zinc-900 transition-all shadow-2xl"
+              title="Open Presenter Studio dashboard"
+            >
+              <Monitor className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="hidden sm:inline">Presenter Studio</span>
+            </a>
+          </div>
         </div>
 
         {/* Connection Badge Bottom Left */}

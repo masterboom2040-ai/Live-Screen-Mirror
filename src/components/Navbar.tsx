@@ -1,9 +1,9 @@
 import React from 'react';
-import { Tv, Monitor, Share2, Sparkles, Circle } from 'lucide-react';
+import { Tv, Monitor, Share2, Circle, ExternalLink } from 'lucide-react';
 
 interface NavbarProps {
   mode: 'presenter' | 'receiver';
-  onModeChange: (mode: 'presenter' | 'receiver') => void;
+  onModeChange: (mode: 'presenter' | 'receiver', openNewTab?: boolean) => void;
   onOpenShare: () => void;
   isStreaming?: boolean;
   connectedCount?: number;
@@ -67,6 +67,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               <Tv className="w-3.5 h-3.5" /> TV Receiver
             </button>
           </div>
+
+          <button
+            onClick={() => onModeChange('receiver', true)}
+            className="hidden md:flex items-center gap-1.5 rounded-xl bg-zinc-900 border border-zinc-800 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white transition-all"
+            title="Open TV Receiver in separate new tab or window"
+          >
+            <ExternalLink className="w-3.5 h-3.5 text-emerald-400" /> Open TV Window
+          </button>
 
           <button
             onClick={onOpenShare}
