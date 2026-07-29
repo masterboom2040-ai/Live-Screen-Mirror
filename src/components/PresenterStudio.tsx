@@ -32,6 +32,7 @@ import {
   AlertTriangle,
   Video,
   Pause,
+  ExternalLink,
 } from 'lucide-react';
 import { Device, SharedFile, ChatMessage, DoodleStroke, Point } from '../types';
 import {
@@ -63,6 +64,7 @@ export const PresenterStudio: React.FC<PresenterStudioProps> = ({
   const [isSharing, setIsSharing] = useState(false);
   const [statusText, setStatusText] = useState('Ready to share screen');
   const [statusType, setStatusType] = useState<'info' | 'success' | 'warn' | 'error'>('info');
+  const [showPermissionHelp, setShowPermissionHelp] = useState(false);
   const [uptime, setUptime] = useState('00:00');
   const [fpsResText, setFpsResText] = useState('— fps / —');
 
@@ -670,13 +672,107 @@ export const PresenterStudio: React.FC<PresenterStudioProps> = ({
         stopSharing();
       };
     } catch (err: any) {
-      const msg =
-        err.name === 'NotAllowedError'
-          ? 'Screen capture permission denied.'
-          : err.message || 'Could not start screen sharing';
+      const isDenied = err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError';
+      const msg = isDenied
+        ? 'Screen capture permission denied (or blocked by browser iframe).'
+        : err.message || 'Could not start screen sharing';
       setStatusText(msg);
       setStatusType('error');
+      if (isDenied) {
+        setShowPermissionHelp(true);
+      }
     }
+  };
+
+  // Fallback Interactive Test Slide Stream (for sandbox/iframe testing when screen capture is restricted)
+  const startDemoStream = () => {
+    setStatusText('Starting Interactive Test Board Stream...');
+    setStatusType('info');
+    setShowPermissionHelp(false);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 1280;
+    canvas.height = 720;
+    const ctx = canvas.getContext('2d');
+
+    let frame = 0;
+    const interval = setInterval(() => {
+      if (!ctx) return;
+      frame++;
+      ctx.fillStyle = '#09090b';
+      ctx.fillRect(0, 0, 1280, 720);
+
+      // Grid background
+      ctx.strokeStyle = '#18181b';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < 1280; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, 720);
+        ctx.stroke();
+      }
+      for (let y = 0; y < 720; y += 40) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(1280, y);
+        ctx.stroke();
+      }
+
+      // Title & Slide Header
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 36px system-ui, sans-serif';
+      ctx.fillText('Live Classroom & Presentation Studio (Demo Feed)', 80, 110);
+
+      ctx.fillStyle = '#a1a1aa';
+      ctx.font = '500 22px system-ui, sans-serif';
+      ctx.fillText('1. Interactive Test Board stream active (30 FPS WebRTC)', 80, 190);
+      ctx.fillText('2. Use the top doodle bar to draw with colors, highlighter, and eraser', 80, 240);
+      ctx.fillText('3. Open TV Receiver on phone or new tab to watch live mirror & annotations', 80, 290);
+
+      // Live Pulse Badge
+      const pulse = 24 + Math.sin(frame * 0.08) * 4;
+      ctx.beginPath();
+      ctx.arc(1140, 100, pulse, 0, Math.PI * 2);
+      ctx.fillStyle = '#10b981';
+      ctx.fill();
+
+      ctx.fillStyle = '#000000';
+      ctx.font = 'bold 14px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('LIVE', 1140, 105);
+      ctx.textAlign = 'left';
+    }, 1000 / 30);
+
+    const stream = canvas.captureStream(30);
+    streamRef.current = stream;
+
+    if (previewRef.current) {
+      previewRef.current.srcObject = stream;
+    }
+
+    setIsSharing(true);
+    setStatusText('Test Slide Stream active! You can doodle and stream to TV receivers.');
+    setStatusType('success');
+    shareStartTimeRef.current = Date.now();
+
+    if (uptimeTimerRef.current) clearInterval(uptimeTimerRef.current);
+    uptimeTimerRef.current = setInterval(() => {
+      if (!shareStartTimeRef.current) return;
+      const sec = Math.floor((Date.now() - shareStartTimeRef.current) / 1000);
+      const m = Math.floor(sec / 60).toString().padStart(2, '0');
+      const s = (sec % 60).toString().padStart(2, '0');
+      setUptime(`${m}:${s}`);
+      setFpsResText('30 fps / 1280×720');
+    }, 1000);
+
+    devices.forEach((d) => {
+      if (d.approved) connectToReceiver(d.id);
+    });
+
+    stream.getVideoTracks()[0].onended = () => {
+      clearInterval(interval);
+      stopSharing();
+    };
   };
 
   const stopSharing = () => {
@@ -932,6 +1028,36 @@ export const PresenterStudio: React.FC<PresenterStudioProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Screen Capture Permission Helper Banner */}
+      {showPermissionHelp && (
+        <div className="rounded-2xl bg-amber-950/40 border border-amber-500/40 p-4 text-amber-200 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 font-bold text-amber-300 text-sm">
+              <Sparkles className="w-4 h-4 text-amber-400" /> Screen Sharing Restricted in iFrame Preview
+            </div>
+            <p className="text-xs text-amber-200/80 max-w-2xl">
+              Browsers restrict OS screen picker permissions inside embedded preview frames. You can either open the app in a full browser tab for standard OS screen selection or launch an interactive test board feed.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            <a
+              href={window.location.href}
+              target="_blank"
+              rel="noreferrer"
+              className="flex-1 md:flex-none flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-black hover:bg-amber-400 transition-all shadow-md"
+            >
+              <ExternalLink className="w-3.5 h-3.5" /> Open in New Tab
+            </a>
+            <button
+              onClick={startDemoStream}
+              className="flex-1 md:flex-none flex items-center justify-center gap-1.5 rounded-xl bg-zinc-800 border border-amber-500/40 px-4 py-2 text-xs font-bold text-amber-200 hover:bg-zinc-700 transition-all"
+            >
+              <Play className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" /> Launch Test Stream
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Grid: Video Preview + Classroom Interactivity */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
