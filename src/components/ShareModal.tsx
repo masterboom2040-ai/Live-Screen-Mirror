@@ -85,9 +85,9 @@ export const ShareModal: React.FC<ShareModalProps> = ({ tvUrl, isOpen, onClose }
             <Monitor className="w-4 h-4 text-emerald-400" /> Quick Instructions
           </div>
           <ol className="list-decimal list-inside space-y-1 text-zinc-400 pl-1">
-            <td>Open the TV URL on any browser (Smart TV, tablet, phone, PC)</td>
-            <td>Click "Allow / Approve" in your Presenter dashboard below</td>
-            <td>Enjoy zero-latency live screen mirroring & interaction</td>
+            <li>Open the TV URL on any browser (Smart TV, tablet, phone, PC)</li>
+            <li>Click "Allow / Approve" in your Presenter dashboard below</li>
+            <li>Enjoy zero-latency live screen mirroring & interaction</li>
           </ol>
         </div>
       </div>

@@ -34,6 +34,8 @@ export interface DoodleStroke {
   color: string;
   lineWidth: number;
   phase: 'start' | 'draw' | 'end';
+  tool?: 'pen' | 'highlighter' | 'eraser';
+  opacity?: number;
 }
 
 export interface IceServerConfig {

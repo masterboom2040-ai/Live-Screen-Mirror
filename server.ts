@@ -586,21 +586,52 @@ async function startServer() {
         return;
       }
 
-      if (msg.type === 'draw-stroke') {
+      if (msg.type === 'draw-stroke' || msg.type === 'presenter-draw-stroke') {
+        const isPresenterSender = role === 'sender' || msg.isPresenter;
+        if (isPresenterSender) {
+          const strokePayload = {
+            isPresenter: true,
+            id: 'presenter',
+            name: 'Presenter',
+            points: Array.isArray(msg.points) ? msg.points.slice(0, 300) : [],
+            color: typeof msg.color === 'string' ? msg.color.slice(0, 30) : '#ef4444',
+            lineWidth: typeof msg.lineWidth === 'number' ? Math.min(Math.max(msg.lineWidth, 1), 60) : 3,
+            tool: typeof msg.tool === 'string' ? msg.tool : 'pen',
+            opacity: typeof msg.opacity === 'number' ? msg.opacity : 1,
+            phase: msg.phase === 'start' || msg.phase === 'end' ? msg.phase : 'draw',
+          };
+          for (const a of approvals.values()) {
+            if (a.ws) wsSend(a.ws, 'draw-stroke', strokePayload);
+          }
+          broadcastToSenders('draw-stroke', strokePayload);
+          return;
+        }
+
         const a = approvals.get(msg.id);
         if (!a || !a.canDraw) return;
         broadcastToSenders('draw-stroke', {
           id: msg.id,
           name: a.name || msg.id.slice(-8),
-          points: Array.isArray(msg.points) ? msg.points.slice(0, 200) : [],
-          color: typeof msg.color === 'string' ? msg.color.slice(0, 20) : '#ef4444',
-          lineWidth: typeof msg.lineWidth === 'number' ? Math.min(Math.max(msg.lineWidth, 1), 20) : 3,
+          points: Array.isArray(msg.points) ? msg.points.slice(0, 300) : [],
+          color: typeof msg.color === 'string' ? msg.color.slice(0, 30) : '#ef4444',
+          lineWidth: typeof msg.lineWidth === 'number' ? Math.min(Math.max(msg.lineWidth, 1), 60) : 3,
+          tool: typeof msg.tool === 'string' ? msg.tool : 'pen',
+          opacity: typeof msg.opacity === 'number' ? msg.opacity : 1,
           phase: msg.phase === 'start' || msg.phase === 'end' ? msg.phase : 'draw',
         });
         return;
       }
 
-      if (msg.type === 'draw-clear') {
+      if (msg.type === 'draw-clear' || msg.type === 'presenter-draw-clear') {
+        const isPresenterSender = role === 'sender' || msg.isPresenter;
+        if (isPresenterSender) {
+          for (const a of approvals.values()) {
+            if (a.ws) wsSend(a.ws, 'draw-clear', { isPresenter: true });
+          }
+          broadcastToSenders('draw-clear', { isPresenter: true });
+          return;
+        }
+
         const a = approvals.get(msg.id);
         if (!a || !a.canDraw) return;
         broadcastToSenders('draw-clear', { id: msg.id });

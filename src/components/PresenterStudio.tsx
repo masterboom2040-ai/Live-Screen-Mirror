@@ -9,6 +9,13 @@ import {
   Users,
   Hand,
   Pencil,
+  Highlighter,
+  Eraser,
+  Undo,
+  RotateCcw,
+  Camera,
+  MousePointer,
+  Palette,
   MessageSquare,
   UploadCloud,
   File,
@@ -26,12 +33,13 @@ import {
   Video,
   Pause,
 } from 'lucide-react';
-import { Device, SharedFile, ChatMessage, DoodleStroke } from '../types';
+import { Device, SharedFile, ChatMessage, DoodleStroke, Point } from '../types';
 import {
   fetchIceServers,
   applyBitrateCap,
   getLetterboxMetrics,
   normalizedToPixel,
+  pixelToNormalized,
   formatBytes,
 } from '../lib/webrtc';
 
@@ -73,6 +81,34 @@ export const PresenterStudio: React.FC<PresenterStudioProps> = ({
   // Shared Files
   const [sharedFiles, setSharedFiles] = useState<SharedFile[]>([]);
   const [uploadProgress, setUploadProgress] = useState<{ name: string; progress: number } | null>(null);
+
+  // Doodle Overlay State
+  const [isDoodleMode, setIsDoodleMode] = useState(true);
+  const [doodleTool, setDoodleTool] = useState<'pen' | 'highlighter' | 'eraser'>('pen');
+  const [doodleColor, setDoodleColor] = useState('#ef4444');
+  const [doodleSize, setDoodleSize] = useState(4);
+  const [historyStack, setHistoryStack] = useState<ImageData[]>([]);
+
+  const isDrawingRef = useRef(false);
+  const currentStrokeRef = useRef<Point[]>([]);
+
+  const COLOR_PRESETS = [
+    { name: 'Red', hex: '#ef4444' },
+    { name: 'Yellow', hex: '#f59e0b' },
+    { name: 'Green', hex: '#10b981' },
+    { name: 'Blue', hex: '#3b82f6' },
+    { name: 'Purple', hex: '#8b5cf6' },
+    { name: 'Pink', hex: '#ec4899' },
+    { name: 'White', hex: '#ffffff' },
+    { name: 'Black', hex: '#000000' },
+  ];
+
+  const SIZE_PRESETS = [
+    { label: 'Fine', value: 2 },
+    { label: 'Medium', value: 5 },
+    { label: 'Thick', value: 10 },
+    { label: 'Marker', value: 20 },
+  ];
 
   // References
   const previewRef = useRef<HTMLVideoElement | null>(null);
@@ -346,8 +382,8 @@ export const PresenterStudio: React.FC<PresenterStudioProps> = ({
     };
   }, [cleanupPeer, connectToReceiver, loadSharedFiles]);
 
-  // Render Student Doodle Stroke onto Video Overlay
-  const renderIncomingStroke = useCallback((msg: DoodleStroke & { name?: string }) => {
+  // Render Student / Incoming Doodle Stroke onto Video Overlay
+  const renderIncomingStroke = useCallback((msg: DoodleStroke & { name?: string; tool?: string; opacity?: number }) => {
     const canvas = drawOverlayCanvasRef.current;
     const video = previewRef.current;
     if (!canvas || !video) return;
@@ -356,20 +392,37 @@ export const PresenterStudio: React.FC<PresenterStudioProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    if (msg.name) {
+    if (msg.name && msg.name !== 'Presenter') {
       setDrawLabel(`✏️ ${msg.name} is drawing`);
       if (drawLabelTimerRef.current) clearTimeout(drawLabelTimerRef.current);
       drawLabelTimerRef.current = setTimeout(() => setDrawLabel(null), 2500);
     }
 
     const rect = canvas.getBoundingClientRect();
-    const metrics = getLetterboxMetrics(rect.width, rect.height, video.videoWidth, video.videoHeight);
+    const metrics = getLetterboxMetrics(
+      rect.width,
+      rect.height,
+      video.videoWidth || rect.width,
+      video.videoHeight || rect.height
+    );
 
     const pts = msg.points || [];
     if (!pts.length) return;
 
-    ctx.strokeStyle = msg.color || '#ef4444';
-    ctx.lineWidth = msg.lineWidth || 3;
+    ctx.save();
+    if (msg.tool === 'eraser') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.lineWidth = (msg.lineWidth || 3) * 2.5;
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = msg.color || '#ef4444';
+      ctx.lineWidth = msg.lineWidth || 3;
+      if (msg.tool === 'highlighter') {
+        ctx.globalAlpha = msg.opacity || 0.35;
+      } else {
+        ctx.globalAlpha = 1;
+      }
+    }
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -382,7 +435,188 @@ export const PresenterStudio: React.FC<PresenterStudioProps> = ({
       ctx.lineTo(p.x, p.y);
     }
     ctx.stroke();
+    ctx.restore();
   }, [resizeDrawOverlay]);
+
+  // Save Canvas State for Undo
+  const saveHistoryState = useCallback(() => {
+    const canvas = drawOverlayCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    try {
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      setHistoryStack((prev) => [...prev.slice(-15), imgData]);
+    } catch (e) {}
+  }, []);
+
+  // Undo Last Doodle Action
+  const undoLastStroke = useCallback(() => {
+    const canvas = drawOverlayCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    if (historyStack.length === 0) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      sendWs('presenter-draw-clear', {});
+      return;
+    }
+
+    const previousState = historyStack[historyStack.length - 1];
+    setHistoryStack((prev) => prev.slice(0, -1));
+    ctx.putImageData(previousState, 0, 0);
+  }, [historyStack, sendWs]);
+
+  // Clear All Doodles
+  const clearAllDoodles = useCallback(() => {
+    saveHistoryState();
+    const canvas = drawOverlayCanvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    sendWs('presenter-draw-clear', {});
+  }, [saveHistoryState, sendWs]);
+
+  // Capture Annotated Frame as PNG
+  const captureAnnotatedFrame = useCallback(() => {
+    const video = previewRef.current;
+    const canvas = drawOverlayCanvasRef.current;
+    if (!canvas) return;
+
+    const exportCanvas = document.createElement('canvas');
+    const w = video && video.videoWidth ? video.videoWidth : canvas.width;
+    const h = video && video.videoHeight ? video.videoHeight : canvas.height;
+    exportCanvas.width = w;
+    exportCanvas.height = h;
+    const ctx = exportCanvas.getContext('2d');
+    if (!ctx) return;
+
+    if (video && isSharing) {
+      try {
+        ctx.drawImage(video, 0, 0, w, h);
+      } catch (e) {}
+    } else {
+      ctx.fillStyle = '#09090b';
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    ctx.drawImage(canvas, 0, 0, w, h);
+
+    const link = document.createElement('a');
+    link.download = `screen-annotation-${Date.now()}.png`;
+    link.href = exportCanvas.toDataURL('image/png');
+    link.click();
+  }, [isSharing]);
+
+  // Flush Presenter Drawing Stroke over WebSocket
+  const flushPresenterStroke = useCallback(
+    (phase: 'start' | 'draw' | 'end') => {
+      if (!currentStrokeRef.current.length && phase === 'draw') return;
+      sendWs('presenter-draw-stroke', {
+        points: currentStrokeRef.current,
+        color: doodleColor,
+        lineWidth: doodleSize,
+        tool: doodleTool,
+        opacity: doodleTool === 'highlighter' ? 0.35 : 1.0,
+        phase,
+      });
+      currentStrokeRef.current = [];
+    },
+    [doodleColor, doodleSize, doodleTool, sendWs]
+  );
+
+  // Presenter Canvas Pointer Handlers
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDoodleMode || !drawOverlayCanvasRef.current) return;
+    saveHistoryState();
+    isDrawingRef.current = true;
+
+    const canvas = drawOverlayCanvasRef.current;
+    const video = previewRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+
+    const vw = video && video.videoWidth ? video.videoWidth : rect.width;
+    const vh = video && video.videoHeight ? video.videoHeight : rect.height;
+    const metrics = getLetterboxMetrics(rect.width, rect.height, vw, vh);
+
+    const norm = pixelToNormalized(px, py, metrics);
+    currentStrokeRef.current = [norm];
+
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.save();
+      if (doodleTool === 'eraser') {
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.lineWidth = doodleSize * 2.5;
+      } else {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = doodleColor;
+        ctx.lineWidth = doodleSize;
+        ctx.globalAlpha = doodleTool === 'highlighter' ? 0.35 : 1.0;
+      }
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+    }
+    flushPresenterStroke('start');
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDrawingRef.current || !isDoodleMode || !drawOverlayCanvasRef.current) return;
+
+    const canvas = drawOverlayCanvasRef.current;
+    const video = previewRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+
+    const vw = video && video.videoWidth ? video.videoWidth : rect.width;
+    const vh = video && video.videoHeight ? video.videoHeight : rect.height;
+    const metrics = getLetterboxMetrics(rect.width, rect.height, vw, vh);
+
+    const norm = pixelToNormalized(px, py, metrics);
+    currentStrokeRef.current.push(norm);
+
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.lineTo(px, py);
+      ctx.stroke();
+    }
+
+    if (currentStrokeRef.current.length >= 8) {
+      flushPresenterStroke('draw');
+    }
+  };
+
+  const handlePointerUp = () => {
+    if (!isDrawingRef.current) return;
+    isDrawingRef.current = false;
+    const canvas = drawOverlayCanvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.restore();
+    }
+    flushPresenterStroke('end');
+  };
+
+  // Keyboard shortcut Ctrl+Z / Cmd+Z for Undo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        const tag = (document.activeElement?.tagName || '').toUpperCase();
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+        e.preventDefault();
+        undoLastStroke();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undoLastStroke]);
 
   // Screen Share Start / Stop
   const startSharing = async () => {
@@ -703,6 +937,145 @@ export const PresenterStudio: React.FC<PresenterStudioProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column (2 Cols): Live Preview Video & Telemetry */}
         <div className="lg:col-span-2 space-y-4">
+          {/* Presenter Studio Doodle Toolbar - Floating Always On Top */}
+          <div className="sticky top-2 z-30 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-zinc-950/95 p-3 border border-zinc-700/80 shadow-2xl backdrop-blur-xl ring-1 ring-white/10">
+            {/* Left: Mode toggle & Tools */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => setIsDoodleMode(!isDoodleMode)}
+                className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition-all ${
+                  isDoodleMode
+                    ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/30 ring-2 ring-emerald-400/50'
+                    : 'bg-zinc-800/90 text-zinc-300 hover:bg-zinc-700'
+                }`}
+                title={isDoodleMode ? 'Doodle Mode Active (Draw on screen overlay)' : 'Pointer Mode Active (Click through screen)'}
+              >
+                {isDoodleMode ? <Pencil className="w-4 h-4 animate-pulse" /> : <MousePointer className="w-4 h-4" />}
+                {isDoodleMode ? 'Doodle Mode ON' : 'Pointer Mode'}
+              </button>
+
+              <div className="h-4 w-px bg-zinc-800 my-auto hidden sm:block" />
+
+              {/* Tool selector */}
+              <div className="flex items-center gap-1 bg-zinc-900/90 p-1 rounded-xl border border-zinc-800">
+                <button
+                  onClick={() => setDoodleTool('pen')}
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    doodleTool === 'pen' ? 'bg-zinc-700 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                  title="Pen Tool"
+                >
+                  <Pencil className="w-3.5 h-3.5" /> Pen
+                </button>
+                <button
+                  onClick={() => setDoodleTool('highlighter')}
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    doodleTool === 'highlighter'
+                      ? 'bg-zinc-700 text-amber-300 shadow'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                  title="Highlighter Tool"
+                >
+                  <Highlighter className="w-3.5 h-3.5" /> Highlight
+                </button>
+                <button
+                  onClick={() => setDoodleTool('eraser')}
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    doodleTool === 'eraser' ? 'bg-zinc-700 text-red-400 shadow' : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                  title="Eraser Tool"
+                >
+                  <Eraser className="w-3.5 h-3.5" /> Eraser
+                </button>
+              </div>
+
+              {/* Color Presets & Picker */}
+              {doodleTool !== 'eraser' && (
+                <div className="flex items-center gap-1.5 bg-zinc-900/90 p-1 px-2 rounded-xl border border-zinc-800">
+                  {COLOR_PRESETS.map((c) => (
+                    <button
+                      key={c.hex}
+                      onClick={() => setDoodleColor(c.hex)}
+                      className={`h-5 w-5 rounded-full border transition-transform ${
+                        doodleColor === c.hex
+                          ? 'scale-125 border-white ring-2 ring-emerald-500/50'
+                          : 'border-zinc-700 hover:scale-110'
+                      }`}
+                      style={{ backgroundColor: c.hex }}
+                      title={c.name}
+                    />
+                  ))}
+                  <label
+                    className="relative cursor-pointer flex items-center justify-center h-5 w-5 rounded-full border border-zinc-700 bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 hover:scale-110 transition-transform"
+                    title="Custom Color"
+                  >
+                    <input
+                      type="color"
+                      value={doodleColor}
+                      onChange={(e) => setDoodleColor(e.target.value)}
+                      className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {/* Line Thickness */}
+              <div className="flex items-center gap-1.5 bg-zinc-900/90 px-2.5 py-1 rounded-xl border border-zinc-800 text-xs text-zinc-300">
+                <span className="text-[10px] uppercase font-bold text-zinc-500 hidden xl:inline">Size</span>
+                <div className="flex items-center gap-1">
+                  {SIZE_PRESETS.map((s) => (
+                    <button
+                      key={s.value}
+                      onClick={() => setDoodleSize(s.value)}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
+                        doodleSize === s.value
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="35"
+                  value={doodleSize}
+                  onChange={(e) => setDoodleSize(Number(e.target.value))}
+                  className="w-16 accent-emerald-500 cursor-pointer hidden sm:block"
+                />
+                <span className="font-mono text-[11px] text-zinc-400 w-5 text-right">{doodleSize}px</span>
+              </div>
+            </div>
+
+            {/* Right: Actions (Undo, Clear All, Snapshot) */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={undoLastStroke}
+                disabled={historyStack.length === 0}
+                className="flex items-center gap-1 rounded-xl bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                title="Undo Last Stroke (Ctrl+Z)"
+              >
+                <Undo className="w-3.5 h-3.5 text-amber-400" /> Undo
+              </button>
+              <button
+                onClick={clearAllDoodles}
+                className="flex items-center gap-1.5 rounded-xl bg-red-950/80 border border-red-500/40 px-3.5 py-1.5 text-xs font-bold text-red-200 hover:bg-red-900 hover:text-white transition-all shadow-md shadow-red-950/50"
+                title="Clear All Canvas Annotations"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-red-400" /> Clear All
+              </button>
+              <button
+                onClick={captureAnnotatedFrame}
+                className="flex items-center gap-1 rounded-xl bg-blue-950/60 border border-blue-500/30 px-3 py-1.5 text-xs font-semibold text-blue-300 hover:bg-blue-900/80 transition-all"
+                title="Save Annotated Screenshot"
+              >
+                <Camera className="w-3.5 h-3.5" /> Snapshot
+              </button>
+            </div>
+          </div>
+
           <div className="relative aspect-video w-full rounded-2xl bg-zinc-950 border border-zinc-800 overflow-hidden shadow-2xl flex items-center justify-center">
             <video
               ref={previewRef}
@@ -713,10 +1086,16 @@ export const PresenterStudio: React.FC<PresenterStudioProps> = ({
               className={`h-full w-full object-contain ${isSharing ? 'block' : 'hidden'}`}
             />
 
-            {/* Doodle Overlay */}
+            {/* Doodle Overlay Canvas */}
             <canvas
               ref={drawOverlayCanvasRef}
-              className="absolute inset-0 h-full w-full pointer-events-none z-10"
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerLeave={handlePointerUp}
+              className={`absolute inset-0 h-full w-full touch-none z-10 ${
+                isDoodleMode ? 'cursor-crosshair pointer-events-auto' : 'pointer-events-none'
+              }`}
             />
 
             {/* Draw Label */}

@@ -360,6 +360,17 @@ export const TvReceiver: React.FC<TvReceiverProps> = () => {
         setCanDraw(false);
       }
 
+      if (msg.type === 'draw-stroke') {
+        renderIncomingStroke(msg);
+      }
+
+      if (msg.type === 'draw-clear') {
+        if (drawCanvasRef.current) {
+          const ctx = drawCanvasRef.current.getContext('2d');
+          if (ctx) ctx.clearRect(0, 0, drawCanvasRef.current.width, drawCanvasRef.current.height);
+        }
+      }
+
       if (msg.type === 'chat-reply') {
         setChatMessages((prev) => [...prev, { who: 'teacher', text: msg.text, label: 'Presenter' }]);
         setHasNewChat(true);
@@ -381,6 +392,50 @@ export const TvReceiver: React.FC<TvReceiverProps> = () => {
     canvas.width = rect.width;
     canvas.height = rect.height;
   }, []);
+
+  const renderIncomingStroke = useCallback((msg: any) => {
+    const canvas = drawCanvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return;
+
+    if (canvas.width === 0) resizeCanvas();
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const metrics = getLetterboxMetrics(rect.width, rect.height, video.videoWidth, video.videoHeight);
+
+    const pts = msg.points || [];
+    if (!pts.length) return;
+
+    ctx.save();
+    if (msg.tool === 'eraser') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.lineWidth = msg.lineWidth || 20;
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = msg.color || '#ef4444';
+      ctx.lineWidth = msg.lineWidth || 3;
+      if (msg.tool === 'highlighter') {
+        ctx.globalAlpha = msg.opacity || 0.35;
+      } else {
+        ctx.globalAlpha = 1;
+      }
+    }
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    ctx.beginPath();
+    const p0 = normalizedToPixel(pts[0].x, pts[0].y, metrics);
+    ctx.moveTo(p0.x, p0.y);
+
+    for (let i = 1; i < pts.length; i++) {
+      const p = normalizedToPixel(pts[i].x, pts[i].y, metrics);
+      ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }, [resizeCanvas]);
 
   useEffect(() => {
     window.addEventListener('resize', resizeCanvas);
@@ -533,7 +588,7 @@ export const TvReceiver: React.FC<TvReceiverProps> = () => {
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           className={`absolute inset-0 h-full w-full touch-none z-10 ${
-            canDraw ? 'cursor-crosshair block' : 'pointer-events-none hidden'
+            canDraw ? 'cursor-crosshair pointer-events-auto' : 'pointer-events-none'
           }`}
         />
 
