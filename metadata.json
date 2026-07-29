@@ -1,0 +1,6 @@
+{
+  "name": "Live Screen Mirror",
+  "description": "Zero-latency live screen sharing, TV receiver mirroring, classroom doodle annotations, student raise-hand, chat, class recorder, and file sharing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
